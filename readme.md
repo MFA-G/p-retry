@@ -189,6 +189,8 @@ Default: `Infinity`
 
 The maximum number of milliseconds between two retries.
 
+Delays longer than `2147483647` (the largest delay `setTimeout` accepts) are waited out with multiple timers instead of being shortened to 1 ms.
+
 ##### randomize
 
 Type: `boolean`\

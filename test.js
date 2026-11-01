@@ -1458,3 +1458,82 @@ test.serial('Only consumed retries advance backoff', async t => {
 	t.deepEqual(contexts.map(context => context.retriesLeft), [2, 2, 1]);
 	t.deepEqual(timeouts, [minTimeout, minTimeout * factor]);
 });
+
+test.serial('timeouts above the maximum timer delay are split into chunks', async t => {
+	const captured = [];
+	const originalSetTimeout = setTimeout;
+	globalThis.setTimeout = (function_, ms) => {
+		captured.push(ms);
+		return originalSetTimeout(function_, 0);
+	};
+
+	t.teardown(() => {
+		globalThis.setTimeout = originalSetTimeout;
+	});
+
+	await t.throwsAsync(pRetry(
+		async () => {
+			throw new Error('test');
+		},
+		{
+			retries: 1,
+			minTimeout: 2 ** 31,
+			randomize: false,
+		},
+	));
+
+	t.deepEqual(captured, [2_147_483_647, 1]);
+});
+
+test.serial('timeouts that need several chunks add up to the requested delay', async t => {
+	const captured = [];
+	const originalSetTimeout = setTimeout;
+	globalThis.setTimeout = (function_, ms) => {
+		captured.push(ms);
+		return originalSetTimeout(function_, 0);
+	};
+
+	t.teardown(() => {
+		globalThis.setTimeout = originalSetTimeout;
+	});
+
+	await t.throwsAsync(pRetry(
+		async () => {
+			throw new Error('test');
+		},
+		{
+			retries: 1,
+			minTimeout: 5_000_000_000,
+			randomize: false,
+		},
+	));
+
+	t.deepEqual(captured, [2_147_483_647, 2_147_483_647, 705_032_706]);
+	t.is(captured.reduce((total, timeout) => total + timeout, 0), 5_000_000_000);
+});
+
+test.serial('aborting interrupts a retry delay above the maximum timer delay', async t => {
+	const controller = new AbortController();
+	let attempts = 0;
+	const started = performance.now();
+
+	const promise = pRetry(
+		async () => {
+			attempts++;
+			throw new Error(`attempt ${attempts}`);
+		},
+		{
+			retries: 1,
+			minTimeout: 2 ** 31,
+			signal: controller.signal,
+		},
+	);
+
+	setTimeout(() => {
+		controller.abort(new Error('stopped'));
+	}, 20);
+
+	await t.throwsAsync(promise, {message: 'stopped'});
+	t.is(attempts, 1);
+	t.true(performance.now() - started < 1000);
+});

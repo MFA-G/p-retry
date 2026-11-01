@@ -1,5 +1,8 @@
 import isNetworkError from 'is-network-error';
 
+// The largest delay `setTimeout` accepts; larger values are clamped to 1 ms.
+const maxTimerDelay = 2_147_483_647;
+
 function validateRetries(retries) {
 	if (typeof retries === 'number') {
 		if (retries < 0) {
@@ -86,6 +89,21 @@ async function delayForRetry(delay, options) {
 		return;
 	}
 
+	// `setTimeout` clamps delays above the 32-bit signed integer limit to 1 ms,
+	// so wait out longer delays in chunks the platform can represent.
+	// A backoff that overflows to `Infinity` waits the largest representable delay.
+	let remaining = Number.isFinite(delay) ? delay : maxTimerDelay;
+
+	while (remaining > 0) {
+		options.signal?.throwIfAborted();
+
+		const timeout = Math.min(remaining, maxTimerDelay);
+		await waitForTimeout(timeout, options);
+		remaining -= timeout;
+	}
+}
+
+async function waitForTimeout(delay, options) {
 	await new Promise((resolve, reject) => {
 		const onAbort = () => {
 			clearTimeout(timeoutToken);
